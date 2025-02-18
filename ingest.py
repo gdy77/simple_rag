@@ -9,35 +9,48 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-model = SentenceTransformer("all-MiniLM-L12-v2")
+model = SentenceTransformer('all-MiniLM-L12-v2')
 es = Elasticsearch(
     os.getenv('ELASTIC_HOST'),
     basic_auth=('elastic', os.getenv('ELASTIC_PWD')),
     verify_certs=True,
     ca_certs=os.getenv('ELASTIC_CRT'),
 )
-index_name = os.getenv('ELASTIC_INDEX'),
 index_settings = {
-    "mappings": {
-        "properties": {
-            "content": {"type": "text"},  # Full-text search
-            "vector": {"type": "dense_vector", "dims": 384}  # Semantic search
+    'mappings': {
+        'properties': {
+            'content': {'type': 'text'},  # Full-text search
+            'vector': {'type': 'dense_vector', 'dims': 384}  # Semantic search
         }
     }
 }
 
-def index_content(file_path, page, content):
+class IndexingError(Exception):
+    pass
+
+
+def index_content(index_name, title, page, content, url=''):
     if not es.indices.exists(index=index_name):
         es.indices.create(index=index_name, body=index_settings)
     embedding = model.encode(content).tolist()
-    body = {
-        "content": content,
-        "vector": embedding,
-        "document": file_path,
-        "page": page,
-        "url": "",
+    document = {
+        'content': content,
+        'vector': embedding,
+        'document': title,
+        'page': page,
+        'url': url,
     }
-    es.index(index=index_name, body=body)
+    
+    try:
+        response = es.index(index=index_name, document=document)
+
+        if response.get('result') in ['created', 'updated']:
+            return response['_id']
+        else:
+            raise IndexingError('Unexpected result: ' + response.get('result'))
+    except Exception as e:
+        raise IndexingError(f'Indexing failed: {e}')
+
 
 def extract_toc(doc):
     toc = doc.get_toc()
@@ -73,13 +86,13 @@ def chapters_from_toc(toc, num_pages, level):
     return chapters
 
 
-def ingest_file(file_path, file_name, step=5):
+def ingest_file(index_name, file_path, file_name, url='', step=5):
     print(file_path)
     doc = fitz.open(file_path)
     num_pages = len(doc)
     toc = extract_toc(doc)
     
-    with_toc = False
+    ids = []
 
     # if table of content is not empty
     if toc != None and len(toc) > 0:
@@ -95,12 +108,19 @@ def ingest_file(file_path, file_name, step=5):
             for chapter in chapters:
                 text = extract_text_from_pages(doc, range(chapter.start, chapter.end))
                 if len(text) / 4 > 8000:
-                    divide_per_chunck(file_name, doc, chapter.start, chapter.end, ceil(len(text) / 4 / 8000))
+                    try :
+                        id = divide_per_chunck(index_name, file_name, url, doc, chapter.start, chapter.end, ceil(len(text) / 4 / 8000))
+                        ids.extend(id)
+                    except IndexingError:
+                        pass
                 else:
-                    index_content(file_name, chapter.start, text)
-            with_toc = True
+                    try :
+                        id = index_content(index_name, file_name, chapter.start, text, url)
+                        ids.append(id)
+                    except IndexingError:
+                        pass
     
-    if not with_toc:
+    if len(ids) == 0:
         for page in range(0, num_pages, step):
             page_end = page + step
             if page_end > num_pages:
@@ -108,26 +128,74 @@ def ingest_file(file_path, file_name, step=5):
             text = extract_text_from_pages(doc, range(page, page_end))
 
             if len(text) / 4 > 8000:
-                divide_per_chunck(file_name, doc, page, page_end, ceil(len(text) / 4 / 8000))
+                try :
+                    id = divide_per_chunck(index_name, file_name, url, doc, page, page_end, ceil(len(text) / 4 / 8000))
+                    ids.extend(id)
+                except IndexingError:
+                    pass
             else:
-                index_content(file_name, page, text)
+                try :
+                    id = index_content(index_name, file_name, page, text, url)
+                    ids.append(id)
+                except IndexingError:
+                    pass
+    
+    return ids
 
 
-def divide_per_chunck(file_name, doc, start, end, nb_block):
+def divide_per_chunck(index_name, file_name, url, doc, start, end, nb_block):
+    ids = []
     for i in range(0, nb_block):
         page_start = floor(start + (end - start) / nb_block * i)
         page_end = floor(start + (end - start) / nb_block * (i + 1))
         text = extract_text_from_pages(doc, range(page_start, page_end))
-        index_content(file_name, page_start, text)
+        try :
+            id = index_content(index_name, file_name, page_start, text, url)
+            ids.append(id)
+        except IndexingError:
+            pass
+    return ids
 
+
+def get_documents(index_name, ids):
+    try:
+        response = es.mget(index=index_name, body={'ids': ids})
+
+        documents = []
+        for doc in response['docs']:
+            if doc.get('found') and doc.get('_source') is not None:
+                documents.append({
+                    'document': doc['_source']['document'],
+                    'page': doc['_source']['page'],
+                    'content': doc['_source']['content'],
+                })
+        return documents
+    except Exception:
+        return None
+
+def delete_documents(index_name, ids):
+    try:
+        actions = []
+        for doc_id in ids:
+            actions.append({'delete': {'_index': index_name, '_id': doc_id}})
+
+        response = es.bulk(body=actions)
+
+        if not response['errors']:
+            return True
+        else:
+            return False
+    except Exception:
+        return False
 
 def main():
     if len(sys.argv) < 2:
-        print("Add a valid directory")
+        print('Add a valid directory')
         sys.exit(1)
     
     if es.ping():
         print('Connected to Elasticsearch !')
+        index_name = 'documents'
         es.options(ignore_status=[404]).indices.delete(index=index_name)
         
         directory_path = sys.argv[1]
@@ -137,7 +205,8 @@ def main():
                     file_extension = file.split('.')[-1]
                     if file_extension == 'pdf':
                         file_path = os.path.join(root, file)
-                        ingest_file(file_path, file)
+                        ids = ingest_file(index_name, file_path, file)
+                        print(ids)
         else:
             print(f"'{directory_path}' is not a valid directory")
             sys.exit(1)
