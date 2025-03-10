@@ -27,6 +27,7 @@ def search_full_text(index_name, query, top_k=3):
                 {
                     'document': hit['_source']['document'],
                     'page': hit['_source']['page'],
+                    'content': hit['_source']['content'],
                     'score': hit['_score'],
                     'id': hit['_id'],
                 } 
@@ -79,6 +80,7 @@ def search_hybride(index_name, query_text, top_k=4):
                 {
                     'document': hit['_source']['document'],
                     'page': hit['_source']['page'],
+                    'content': hit['_source']['content'],
                     'score': hit['_score'],
                     'id': hit['_id'],
                 } 

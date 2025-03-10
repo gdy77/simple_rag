@@ -1,7 +1,7 @@
 import os
 import sys
 from openai import OpenAI
-from search import search_hybride
+from .search import search_hybride
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,7 +11,7 @@ client = OpenAI(
     api_key = os.getenv('LLM_KEY'),
 )
 
-def answer_keywords(query):
+def answer_en_keywords(query):
     prompt = f"Extract the keywords from this question. :\n{query}\nYour answer will be a list with the keywords separated by a comma. If no keyword is found, return 0."
     response = client.chat.completions.create(
         model=os.getenv('LLM_MODEL'),
@@ -31,7 +31,7 @@ If words are in uppercase in the question, they are keywords.
     return [k.strip() for k in keywords]
 
 
-def answer_generate(question, search_results):
+def answer_en_generate(question, search_results):
     context = ""
     for s in search_results:
         doc_context = f"Document title : {s['document']}, Page : {s['page']}, Text : {s['content']}\n"
@@ -62,7 +62,7 @@ def main():
         sys.exit(1)
 
     query = sys.argv[1]
-    keywords = answer_keywords(query)
+    keywords = answer_en_keywords(query)
 
     if len(keywords) > 0:
         print(" ".join(keywords))
@@ -72,7 +72,7 @@ def main():
             print(f"score : {s['score']} - document : {s['document']} - page : {s['page']}")
 
         if len(search) > 0:
-            answer = answer_generate(query, search)
+            answer = answer_en_generate(query, search)
             print(answer)
         else:
             print("Can not find any information about this question")

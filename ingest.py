@@ -189,13 +189,13 @@ def delete_documents(index_name, ids):
         return False
 
 def main():
-    if len(sys.argv) < 2:
-        print('Add a valid directory')
+    if len(sys.argv) < 3:
+        print('Add a directory and an index_name')
         sys.exit(1)
     
     if es.ping():
         print('Connected to Elasticsearch !')
-        index_name = 'documents'
+        index_name = sys.argv[2]
         es.options(ignore_status=[404]).indices.delete(index=index_name)
         
         directory_path = sys.argv[1]

@@ -1,7 +1,7 @@
 import os
 import sys
 from openai import OpenAI
-from search import search_hybride
+from .search import search_hybride
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,7 +11,7 @@ client = OpenAI(
     api_key = os.getenv('LLM_KEY'),
 )
 
-def answer_keywords(query):
+def answer_fr_keywords(query):
     prompt = f"Extraire les mots clés de cette question :\n{query}\nVotre réponse sera une liste avec les mots clés séparés par une virgule. Si aucun mot clé n'est trouvé, renvoyer 0."
     response = client.chat.completions.create(
         model=os.getenv('LLM_MODEL'),
@@ -31,7 +31,7 @@ Si des mots sont en majuscules dans la question, c'est qu'il s'agit de mots clé
     return [k.strip() for k in keywords]
 
 
-def answer_generate(question, search_results):
+def answer_fr_generate(question, search_results):
     context = ""
     for s in search_results:
         doc_context = f"Titre du document : {s['document']}, Page : {s['page']}, Texte : {s['content']}\n"
@@ -62,7 +62,7 @@ def main():
         sys.exit(1)
 
     query = sys.argv[1]
-    keywords = answer_keywords(query)
+    keywords = answer_fr_keywords(query)
 
     if len(keywords) > 0:
         print(" ".join(keywords))
@@ -72,7 +72,7 @@ def main():
             print(f"score : {s['score']} - document : {s['document']} - page : {s['page']}")
 
         if len(search) > 0:
-            answer = answer_generate(query, search)
+            answer = answer_fr_generate(query, search)
             print(answer)
         else:
             print("Can not find any information about this question")
